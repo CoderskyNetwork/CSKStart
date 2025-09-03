@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 if command -v apk >/dev/null 2>&1; then
   apk add --no-cache git openssh-client curl jq
@@ -7,27 +7,52 @@ elif command -v apt-get >/dev/null 2>&1; then
   apt-get update && apt-get install -y git openssh-client curl jq && rm -rf /var/lib/apt/lists/*
 fi
 
-cd /home/container
+BASE="/home/container"
+mkdir -p "$BASE"
+cd "$BASE"
 
 if [ -n "${REMOTE_SSH_KEY:-}" ]; then
-  mkdir -p /home/container/.ssh
-  chmod 700 /home/container/.ssh
-  printf "%s\n" "${REMOTE_SSH_KEY}" > /home/container/.ssh/id_ed25519
-  chmod 600 /home/container/.ssh/id_ed25519
-  ssh-keyscan github.com >> /home/container/.ssh/known_hosts 2>/dev/null || true
-  chmod 644 /home/container/.ssh/known_hosts
+  mkdir -p "$BASE/.ssh"
+  chmod 700 "$BASE/.ssh"
+  printf "%s\n" "${REMOTE_SSH_KEY}" > "$BASE/.ssh/id_ed25519"
+  chmod 600 "$BASE/.ssh/id_ed25519"
+  ssh-keyscan github.com >> "$BASE/.ssh/known_hosts" 2>/dev/null || true
+  chmod 644 "$BASE/.ssh/known_hosts"
 fi
 
-if [ -n "${REMOTE_GIT:-}" ] && [ ! -d .git ]; then
+git config --global --add safe.directory "$BASE" || true
+
+if [ -n "${REMOTE_GIT:-}" ]; then
   BRANCH="${REMOTE_BRANCH:-main}"
-  if [ -f /home/container/.ssh/id_ed25519 ]; then
-    GIT_SSH_COMMAND='ssh -i /home/container/.ssh/id_ed25519 -o IdentitiesOnly=yes' \
-      git clone --depth=1 --branch "$BRANCH" "$REMOTE_GIT" /home/container
+  if [ -f "$BASE/.ssh/id_ed25519" ]; then
+    export GIT_SSH_COMMAND='ssh -i /home/container/.ssh/id_ed25519 -o IdentitiesOnly=yes'
   else
-    echo "[CSKStart] WARNING: REMOTE_GIT is set but REMOTE_SSH_KEY is missing. Clone skipped."
+    echo "[CSKStart] WARNING: REMOTE_GIT is set but REMOTE_SSH_KEY is missing. Using default SSH agent (may fail)."
+  fi
+
+  if [ -d ".git" ]; then
+    echo "[CSKStart] GIT: repository found. Updating $BRANCH..."
+    git fetch --all -q
+    git reset --hard "origin/${BRANCH}" -q
+    git submodule update --init --recursive -q || true
+
+  else
+    if [ -z "$(ls -A "$BASE" 2>/dev/null)" ]; then
+      echo "[CSKStart] GIT: empty dir. Cloning $BRANCH..."
+      git clone --depth=1 --branch "$BRANCH" "$REMOTE_GIT" "$BASE"
+    else
+      echo "[CSKStart] GIT: non-empty dir without .git. Initializing in-place on $BRANCH..."
+      git init -q
+      git remote remove origin 2>/dev/null || true
+      git remote add origin "$REMOTE_GIT"
+      git fetch --depth=1 origin "$BRANCH" -q
+      git checkout -B "$BRANCH" "origin/$BRANCH" -q
+      git reset --hard "origin/$BRANCH" -q
+      git submodule update --init --recursive -q || true
+    fi
   fi
 fi
 
-curl -fsSL "https://raw.githubusercontent.com/CoderskyNetwork/CSKStart/refs/heads/main/start.sh" -o /home/container/start.sh
-chmod +x /home/container/start.sh
-echo "[CSKStart] start.sh installed from remote."
+curl -fsSL "https://raw.githubusercontent.com/CoderskyNetwork/CSKStart/refs/heads/main/start.sh" -o "$BASE/start.sh"
+chmod +x "$BASE/start.sh"
+echo "[CSKStart] start.sh installed/updated."
