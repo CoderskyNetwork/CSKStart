@@ -21,6 +21,7 @@ if [ -n "${REMOTE_SSH_KEY:-}" ]; then
 fi
 
 git config --global --add safe.directory "$BASE" || true
+git config --global --add safe.directory /mnt/server || true
 
 if [ -n "${REMOTE_GIT:-}" ]; then
   BRANCH="${REMOTE_BRANCH:-main}"
