@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /home/container
+export HOME="/home/container"
 
 SERVER_TYPE="${SERVER_TYPE:-paper}"
 VERSION="${VERSION:-latest}"
@@ -22,8 +23,10 @@ memXms="-Xms${MEM_MB}M"
 if [[ -n "$REMOTE_GIT" && -d .git ]]; then
   echo "[CSKStart] Updating ${REMOTE_BRANCH} from ${REMOTE_GIT}..."
   if [[ -f /home/container/.ssh/id_ed25519 ]]; then
-    GIT_SSH_COMMAND='ssh -i /home/container/.ssh/id_ed25519 -o IdentitiesOnly=yes' git fetch --all -q
-    git reset --hard "origin/${REMOTE_BRANCH}" -q
+    export GIT_SSH_COMMAND='ssh -i /home/container/.ssh/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=/home/container/.ssh/known_hosts -o StrictHostKeyChecking=accept-new'
+    git config --global --add safe.directory /home/container || true
+    git fetch --all -q || true
+    git reset --hard "origin/${REMOTE_BRANCH}" -q || true
     git submodule update --init --recursive -q || true
   else
     echo "[CSKStart] WARNING: REMOTE_SSH_KEY is not installed; git pull skipped."
@@ -32,10 +35,22 @@ elif [[ -n "$REMOTE_GIT" && ! -d .git ]]; then
   echo "[CSKStart] WARNING: REMOTE_GIT is set but .git is missing. Reinstall or clone manually."
 fi
 
+# --- Helpers without jq ---
+json_get_array_last() {
+  # $1: key name, reads JSON from stdin (single-line or multi-line)
+  # prints last element (without quotes)
+  tr -d '\n' | sed -n "s/.*\"$1\":[[]\([^]]]*\)].*/\1/p" | awk -F',' '{gsub(/^[ \t"]+|[ \t"]+$/, "", $NF); gsub(/^"|"$/, "", $NF); print $NF}'
+}
+
+api_get() {
+  # $1: url
+  curl -fsSL -H "User-Agent: ${USER_AGENT}" "$1"
+}
+
 resolve_version() {
   local project="$1"
   if [[ "$VERSION" == "latest" ]]; then
-    curl -fsSL -H "User-Agent: ${USER_AGENT}" "https://api.papermc.io/v2/projects/${project}" | jq -r '.versions[-1]'
+    api_get "https://api.papermc.io/v2/projects/${project}" | json_get_array_last "versions"
   else
     echo "$VERSION"
   fi
@@ -43,7 +58,7 @@ resolve_version() {
 
 resolve_build() {
   local project="$1" ver="$2"
-  curl -fsSL -H "User-Agent: ${USER_AGENT}" "https://api.papermc.io/v2/projects/${project}/versions/${ver}" | jq -r '.builds[-1]'
+  api_get "https://api.papermc.io/v2/projects/${project}/versions/${ver}" | json_get_array_last "builds"
 }
 
 download_jar() {
@@ -56,9 +71,9 @@ download_jar() {
 if [[ ! -f "${JAR_NAME}" ]]; then
   case "$SERVER_TYPE" in
     paper|velocity)
-      ver="$(resolve_version "$SERVER_TYPE")"
-      build="$(resolve_build "$SERVER_TYPE" "$ver")"
-      if [[ -z "$ver" || -z "$build" || "$ver" == "null" || "$build" == "null" ]]; then
+      ver="$(resolve_version "$SERVER_TYPE" || true)"
+      build="$(resolve_build "$SERVER_TYPE" "$ver" || true)"
+      if [[ -z "${ver:-}" || -z "${build:-}" || "$ver" == "null" || "$build" == "null" ]]; then
         echo "[CSKStart] ERROR: Unable to resolve version/build for ${SERVER_TYPE}."
         exit 1
       fi
