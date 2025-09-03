@@ -22,6 +22,7 @@ fi
 
 git config --global --add safe.directory "$BASE" || true
 git config --global --add safe.directory /mnt/server || true
+unset GIT_DIR GIT_WORK_TREE
 
 if [ -n "${REMOTE_GIT:-}" ]; then
   BRANCH="${REMOTE_BRANCH:-main}"
@@ -31,9 +32,20 @@ if [ -n "${REMOTE_GIT:-}" ]; then
     echo "[CSKStart] WARNING: REMOTE_GIT is set but REMOTE_SSH_KEY is missing. Using default SSH agent (may fail)."
   fi
 
-  echo "[CSKStart] Cleaning and cloning fresh repo ($BRANCH)..."
+  echo "[CSKStart] Cleaning and fetching fresh repo ($BRANCH)..."
   tmpdir="$(mktemp -d)"
-  git clone --depth=1 --branch "$BRANCH" "$REMOTE_GIT" "$tmpdir"
+
+  git -C "$tmpdir" init -q
+  git -C "$tmpdir" remote add origin "$REMOTE_GIT"
+  if ! git -C "$tmpdir" fetch --depth=1 origin "$BRANCH" -q; then
+    git -C "$tmpdir" fetch --depth=1 origin -q
+    def_ref="$(git -C "$tmpdir" symbolic-ref -q refs/remotes/origin/HEAD || true)"
+    def_branch="${def_ref#refs/remotes/origin/}"
+    [ -n "$def_branch" ] || def_branch="master"
+    BRANCH="$def_branch"
+  fi
+  git -C "$tmpdir" checkout -B "$BRANCH" "origin/$BRANCH" -q
+
   shopt -s dotglob nullglob
   rm -rf "$BASE"/* || true
   mv "$tmpdir"/* "$BASE"/
