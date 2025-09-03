@@ -31,27 +31,23 @@ if [ -n "${REMOTE_GIT:-}" ]; then
     echo "[CSKStart] WARNING: REMOTE_GIT is set but REMOTE_SSH_KEY is missing. Using default SSH agent (may fail)."
   fi
 
-  if [ -d ".git" ]; then
-    echo "[CSKStart] GIT: repository found. Updating $BRANCH..."
-    git fetch --all -q
-    git reset --hard "origin/${BRANCH}" -q
-    git submodule update --init --recursive -q || true
-
-  else
-    if [ -z "$(ls -A "$BASE" 2>/dev/null)" ]; then
-      echo "[CSKStart] GIT: empty dir. Cloning $BRANCH..."
-      git clone --depth=1 --branch "$BRANCH" "$REMOTE_GIT" "$BASE"
-    else
-      echo "[CSKStart] GIT: non-empty dir without .git. Initializing in-place on $BRANCH..."
-      git init -q
-      git remote remove origin 2>/dev/null || true
-      git remote add origin "$REMOTE_GIT"
-      git fetch --depth=1 origin "$BRANCH" -q
-      git checkout -B "$BRANCH" "origin/$BRANCH" -q
-      git reset --hard "origin/$BRANCH" -q
-      git submodule update --init --recursive -q || true
-    fi
+  tmp_ssh=""
+  if [ -d "$BASE/.ssh" ]; then
+    tmp_ssh="$(mktemp -d)"
+    mv "$BASE/.ssh" "$tmp_ssh/.ssh"
   fi
+
+  shopt -s dotglob nullglob
+  rm -rf "$BASE"/* || true
+  shopt -u dotglob nullglob
+  mkdir -p "$BASE"
+
+  if [ -n "$tmp_ssh" ] && [ -d "$tmp_ssh/.ssh" ]; then
+    mv "$tmp_ssh/.ssh" "$BASE/.ssh"
+    rmdir "$tmp_ssh" || true
+  fi
+
+  git clone --depth=1 --branch "$BRANCH" "$REMOTE_GIT" "$BASE"
 fi
 
 curl -fsSL "https://raw.githubusercontent.com/CoderskyNetwork/CSKStart/refs/heads/main/start.sh" -o "$BASE/start.sh"
